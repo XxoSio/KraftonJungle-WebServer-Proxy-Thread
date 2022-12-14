@@ -26,6 +26,9 @@ void build_http_header(char *http_header, char *hostname, char *path, int port, 
 // int connect_endServer(char *hostname, int port, char *http_header);
 int connect_endServer(char *hostname, int port);
 
+// 쓰레드 함수 선언
+void *thread(void *vargp);
+
 // 1. 클라이언트와의 fd를 클라이언트용 rio에 연결(Rio_readinitb)함
 //    a. rio는 Registered Input/Output 라는 소켓 API 임 - 메시지를 보낼 수 있는 텍스트창으로 보면 됨.
 // 2. 클라이언트의 요청을 한줄 읽어들여서(Rio_readlineb) 메서드와 URI, HTTP 버전을 얻고, URI에서 목적지 호스트와 포트를 뽑아냄
@@ -37,11 +40,15 @@ int connect_endServer(char *hostname, int port);
 
 int main(int argc, char **argv)
 {
-    int listenfd, connfd;
+    // malloc을 사용하므로 connfd에 * 추가
+    int listenfd, *connfd;
+
     socklen_t  clientlen;
     char hostname[MAXLINE], port[MAXLINE];
 
     struct sockaddr_storage clientaddr;/*generic sockaddr struct which is 28 Bytes.The same use as sockaddr*/
+
+    pthread_t tid;
 
     // port number가 argument로 입력되지 않은 경우 error반환
     if(argc != 2){
@@ -53,15 +60,36 @@ int main(int argc, char **argv)
     listenfd = Open_listenfd(argv[1]);
     while(1) {
         clientlen = sizeof(clientaddr);
-        connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
+
+        // 쓰레드 경쟁 상태를 피하기 위한 동적 할당
+        connfd = Malloc(sizeof(int));
+        *connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
 
         // hostname과 portnumber string으로 반환
         Getnameinfo((SA*)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
         printf("Accepted connection from (%s %s).\n", hostname, port);
-        doit(connfd);
-        Close(connfd);
+
+        // 쓰레드 생성
+        Pthread_create(&tid, NULL, thread, (void *)connfd);
+
+        // doit(connfd);
+        // Close(connfd);
     }
+
     return 0;
+}
+
+/* Thread routine */
+// 쓰레드 함수 정의
+void *thread(void *vargp){
+    int connfd = *((int *)vargp);
+
+    doit(connfd);
+    Pthread_detach(Pthread_self());
+
+    Close(connfd);
+
+    return NULL;
 }
 
 void doit(int connfd)
